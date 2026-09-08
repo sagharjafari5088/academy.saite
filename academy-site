@@ -1,0 +1,82 @@
+<?php
+/**
+ * Plugin Name: Academy Site
+ * Description: Modular website functionality for Academy.
+ * Version: 2.0.14
+ * Author: Academy
+ * Text Domain: academy-site
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+define( 'ACADEMY_SITE_VERSION', '1.51.5' );
+define( 'ACADEMY_SITE_DB_VERSION', '2.0.6' );
+define( 'ACADEMY_SITE_FILE', __FILE__ );
+define( 'ACADEMY_SITE_PATH', plugin_dir_path( __FILE__ ) );
+define( 'ACADEMY_SITE_URL', plugin_dir_url( __FILE__ ) );
+
+require_once ACADEMY_SITE_PATH . 'core/helpers.php';
+require_once ACADEMY_SITE_PATH . 'core/variables.php';
+require_once ACADEMY_SITE_PATH . 'core/database.php';
+require_once ACADEMY_SITE_PATH . 'core/assets.php';
+require_once ACADEMY_SITE_PATH . 'core/permissions.php';
+require_once ACADEMY_SITE_PATH . 'core/elementor.php';
+require_once ACADEMY_SITE_PATH . 'core/loader.php';
+require_once ACADEMY_SITE_PATH . 'core/render/loader.php';
+
+register_activation_hook( __FILE__, 'academy_site_activate' );
+function academy_site_activate() {
+    if ( function_exists( 'academy_site_reset_module_status' ) ) academy_site_reset_module_status();
+    if ( function_exists( 'academy_site_load_modules' ) ) academy_site_load_modules();
+    academy_site_run_installers_safely();
+    update_option( 'academy_site_db_version', ACADEMY_SITE_DB_VERSION, false );
+    flush_rewrite_rules();
+}
+
+function academy_site_run_installers_safely() {
+    $classes = array(
+        'Academy_Site_Courses','Academy_Site_Enrollment','Academy_Site_Progress','Academy_Site_Certificates',
+        'Academy_Site_Events','Academy_Site_Wallet','Academy_Site_SMS','Academy_Site_Campaigns','Academy_Site_Auth',
+        'Academy_Site_Support','Academy_Site_Student_Card','Academy_Site_Instructors','Academy_Site_QR',
+        'Academy_Site_Commerce','Academy_Site_Consultations'
+    );
+    foreach ( $classes as $class ) {
+        try {
+            if ( class_exists( $class ) && method_exists( $class, 'install' ) ) call_user_func( array( $class, 'install' ) );
+            if ( 'Academy_Site_Consultations' === $class && method_exists( $class, 'activate' ) ) $class::activate();
+        } catch ( Throwable $e ) {
+            error_log( '[Academy Site] Installer failed for ' . $class . ': ' . $e->getMessage() );
+        }
+    }
+}
+
+// Admin Hub is bootstrapped directly by the core so the WordPress management menu
+// never depends on the optional module loader.
+$academy_site_admin_hub = ACADEMY_SITE_PATH . 'modules/admin-hub/admin-hub.php';
+if ( file_exists( $academy_site_admin_hub ) ) {
+    try {
+        require_once $academy_site_admin_hub;
+    } catch ( Throwable $e ) {
+        error_log( '[Academy Site] Admin Hub failed: ' . $e->getMessage() );
+    }
+}
+
+add_action( 'plugins_loaded', 'academy_site_init' );
+function academy_site_init() {
+    if ( function_exists( 'academy_site_load_modules' ) ) academy_site_load_modules();
+    $installed = get_option( 'academy_site_db_version', '0' );
+    if ( version_compare( $installed, ACADEMY_SITE_DB_VERSION, '<' ) ) {
+        academy_site_run_installers_safely();
+        update_option( 'academy_site_db_version', ACADEMY_SITE_DB_VERSION, false );
+    }
+}
+register_deactivation_hook( __FILE__, function() {
+    wp_clear_scheduled_hook( 'academy_site_birthday_scheduler' );
+    wp_clear_scheduled_hook( 'academy_site_wallet_expire' );
+    wp_clear_scheduled_hook( 'academy_site_campaign_scheduler' );
+    wp_clear_scheduled_hook( 'academy_site_otp_delivery' );
+    wp_clear_scheduled_hook( 'academy_site_commerce_cleanup' );
+    flush_rewrite_rules();
+} );
